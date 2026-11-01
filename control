@@ -1,6 +1,6 @@
 Package: org.coolstar.libhooker
 Name: libhooker (roothide port)
-Version: 1.6.9-21+roothide
+Version: 1.6.9-22+roothide
 Architecture: iphoneos-arm64e
 Description: libhooker engine, tweak loader and safe mode for iOS 16+ roothide
 Maintainer: libhooker roothide port contributors

@@ -16,6 +16,9 @@ xcrun clang "${common[@]}" tests/thread-safety.c libhooker/mem/threadSafety.c \
 worker/host-tests/thread-safety
 xcrun clang "${common[@]}" tests/memory-backend.c -o worker/host-tests/memory-backend
 worker/host-tests/memory-backend
+for mode in legacy partial-patch partial-protect unavailable; do
+    worker/host-tests/memory-backend "$mode"
+done
 xcrun clang "${common[@]}" tests/hook-resources.c -o worker/host-tests/hook-resources
 worker/host-tests/hook-resources
 xcrun clang "${common[@]}" tests/header-relay-mask.c -o worker/host-tests/header-relay-mask

@@ -3,6 +3,7 @@
 #include "writeMem.h"
 #include "shadowMem.h"
 #include "threadSafety.h"
+#include "legacy-memory.h"
 #include <dlfcn.h>
 #include <errno.h>
 #include <ptrauth.h>
@@ -21,6 +22,10 @@ struct LHMemoryBackend { LHProtect protect; LHPatch patch; };
 static struct LHMemoryBackend LHInitializeMemory(void) {
     static _Atomic(LHProtect) cachedProtect;
     static _Atomic(LHPatch) cachedPatch;
+    static atomic_bool cachedLegacy;
+    if (atomic_load_explicit(&cachedLegacy, memory_order_acquire)) {
+        return (struct LHMemoryBackend){LHLegacyProtect, LHLegacyPatch};
+    }
     LHProtect protect = atomic_load_explicit(&cachedProtect, memory_order_relaxed);
     if (!protect) {
         protect = (LHProtect)dlsym(RTLD_DEFAULT, "substrate_vm_protect");
@@ -30,6 +35,11 @@ static struct LHMemoryBackend LHInitializeMemory(void) {
     if (!patch) {
         patch = (LHPatch)dlsym(RTLD_DEFAULT, "substrate_hook_memory");
         if (patch) atomic_store_explicit(&cachedPatch, patch, memory_order_relaxed);
+    }
+    // 旧版没有这两个导出；完整使用本地后端，避免混用不完整的服务接口。
+    if (!protect && !patch && LHPrepareLegacyMemory()) {
+        atomic_store_explicit(&cachedLegacy, true, memory_order_release);
+        return (struct LHMemoryBackend){LHLegacyProtect, LHLegacyPatch};
     }
     return (struct LHMemoryBackend){protect, patch};
 }

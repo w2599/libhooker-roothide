@@ -2,6 +2,7 @@
 #include "libhooker.h"
 #include "../libhooker/mem/writeMem.h"
 #include <dlfcn.h>
+#include "../libhooker/mem/legacy-memory.h"
 #include <errno.h>
 #include <libkern/OSCacheControl.h>
 #include <mach/mach.h>
@@ -30,6 +31,7 @@ struct LHTestCase {
     bool headerChain;
     bool failOutputRestore;
     bool functionBranches;
+    bool legacySelfPage;
 };
 
 static const struct LHTestCase cases[] = {
@@ -45,7 +47,8 @@ static const struct LHTestCase cases[] = {
     {"header-chain-rollback", 2, true, false, false, false, true, false},
     {"header-chain-pointer-failure", 2, true, false, false, false, true, true},
     {"header-relay-publish-failure", 1, true, false, false, false, true, false},
-    {"function-branches", .functionBranches = true}
+    {"function-branches", .functionBranches = true},
+    {"legacy-self-page", .legacySelfPage = true}
 };
 
 static LHTestPatchBackend realPatch;
@@ -377,10 +380,40 @@ static int runFunctionBranches(void) {
     return failures ? 1 : 0;
 }
 
+// 原样重写补丁器自身及权限函数所在页，验证移除执行权期间始终在独立页取指。
+static int runLegacySelfPage(void) {
+    pageSize = vm_page_size;
+    require(LHPrepareLegacyMemory(), "legacy writer prepared");
+    if (failures) return 1;
+    void *functions[] = {(void *)&LHLegacyPatch, (void *)&LHLegacyProtect};
+    uint8_t *snapshot = malloc(pageSize);
+    if (!snapshot) return 2;
+    for (unsigned index = 0; index < 2; index++) {
+        uintptr_t page = (uintptr_t)ptrauth_strip(functions[index], ptrauth_key_function_pointer) & ~(pageSize - 1);
+        uint32_t before = 0, after = 0;
+        require(LHGetMemoryProtection(page, &before), "self page readable");
+        memcpy(snapshot, (void *)page, pageSize);
+        require(LHLegacyPatch((void *)page, snapshot, pageSize) == KERN_SUCCESS, "self page rewritten");
+        sys_icache_invalidate((void *)page, pageSize);
+        require(!memcmp(snapshot, (void *)page, pageSize), "self page bytes preserved");
+        require(LHGetMemoryProtection(page, &after) && before == after, "self page permission preserved");
+    }
+    free(snapshot);
+    printf("{\"case\":\"%s\",\"status\":\"%s\",\"checks\":%u,\"failures\":%u}\n",
+        selected->name, failures ? "fail" : "pass", checks, failures);
+    return failures ? 1 : 0;
+}
+
 // 运行单个独立案例，真实调用所有目标和需要保留的原函数跳板。
 static int runCase(void) {
+    if (selected->legacySelfPage) return runLegacySelfPage();
     realPatch = (LHTestPatchBackend)dlsym(RTLD_DEFAULT, "substrate_hook_memory");
     realProtect = (LHTestProtectBackend)dlsym(RTLD_DEFAULT, "substrate_vm_protect");
+    // 旧版环境用真实本地后端执行相同故障矩阵，不用接口桩替代设备写入。
+    if (!realPatch && !realProtect && LHPrepareLegacyMemory()) {
+        realPatch = LHLegacyPatch;
+        realProtect = LHLegacyProtect;
+    }
     if (!realPatch || !realProtect) {
         printf("{\"case\":\"%s\",\"status\":\"error\",\"detail\":\"bootstrap interfaces unavailable\"}\n", selected->name);
         return 2;

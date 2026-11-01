@@ -12,7 +12,7 @@
 // 返回当前引擎版本，便于核对隔离测试与安装包。
 LIBHOOKER_EXPORT const char *LHVersion(void){
 #ifdef LH_ROOTHIDE
-    return "libhooker 1.6.9-21+roothide (experimental). Copyright (C) 2022, CoolStar. All Rights Reserved.";
+    return "libhooker 1.6.9-22+roothide (experimental). Copyright (C) 2022, CoolStar. All Rights Reserved.";
 #else
     return "libhooker 1.7.0. Copyright (C) 2022, CoolStar. All Rights Reserved.";
 #endif

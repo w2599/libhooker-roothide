@@ -11,6 +11,8 @@
 #include "../libhooker/mem/shadowMem.h"
 
 static unsigned checks;
+static unsigned availableExports = 3, resolutions, legacyPreparations;
+static bool legacyAvailable = true;
 #define REQUIRE(condition) do { \
     ++checks; \
     if (!(condition)) { \
@@ -75,8 +77,9 @@ static kern_return_t mockProtect(vm_map_t task, mach_vm_address_t address, mach_
 // 仅向被测源码提供两个 bootstrap 接口，不覆盖宿主进程的动态解析器。
 static void *mockDlsym(void *handle, const char *name) {
     REQUIRE(handle == RTLD_DEFAULT);
-    if (!strcmp(name, "substrate_hook_memory")) return (void *)mockPatch;
-    if (!strcmp(name, "substrate_vm_protect")) return (void *)mockProtect;
+    resolutions++;
+    if (!strcmp(name, "substrate_hook_memory")) return (availableExports & 1) ? (void *)mockPatch : NULL;
+    if (!strcmp(name, "substrate_vm_protect")) return (availableExports & 2) ? (void *)mockProtect : NULL;
     REQUIRE(false);
     return NULL;
 }
@@ -110,6 +113,12 @@ static kern_return_t mockRead(vm_map_read_t task, mach_vm_address_t address, mac
 // 指令缓存维护只记录调用，不对宿主执行页做任何操作。
 static void mockInvalidate(void *address, size_t size) { (void)address; (void)size; mock.invalidations++; }
 
+// 旧版后端的设备行为另做真机验证；此处只验证完整选择与初始化缓存。
+static bool mockPrepareLegacy(void) { legacyPreparations++; return legacyAvailable; }
+
+#define LHPrepareLegacyMemory mockPrepareLegacy
+#define LHLegacyProtect mockProtect
+#define LHLegacyPatch mockPatch
 #define dlsym mockDlsym
 #define mach_vm_region_recurse mockRegion
 #define mach_vm_protect mockProtect
@@ -121,6 +130,9 @@ static void mockInvalidate(void *address, size_t size) { (void)address; (void)si
 #undef mach_vm_protect
 #undef mach_vm_read_overwrite
 #undef sys_icache_invalidate
+#undef LHPrepareLegacyMemory
+#undef LHLegacyProtect
+#undef LHLegacyPatch
 
 // 普通 RW 页只改脏字节，邻接字节及权限保持原值，不调用 bootstrap 整页补丁。
 static void testDirtyRanges(void) {
@@ -220,17 +232,32 @@ static void testRestoreFailures(void) {
 }
 
 // 使用真实页大小及普通堆内存运行后端回归，所有权限操作均经过桩。
-int main(void) {
+int main(int argc, char **argv) {
     REQUIRE(!posix_memalign((void **)&memory, PAGE_SIZE, PAGE_SIZE));
     original = malloc(PAGE_SIZE); replacement = malloc(PAGE_SIZE);
     mask = malloc(PAGE_SIZE / 8); scratch = malloc(PAGE_SIZE * 2);
     REQUIRE(original && replacement && mask && scratch);
+    if (argc > 1) {
+        availableExports = !strcmp(argv[1], "partial-patch") ? 1 : !strcmp(argv[1], "partial-protect") ? 2 : 0;
+        legacyAvailable = strcmp(argv[1], "unavailable") != 0;
+        if (availableExports || !legacyAvailable) {
+            resetFixture(VM_PROT_READ | VM_PROT_EXECUTE);
+            dirtyRange(8, 8);
+            REQUIRE(!LHCommitMemoryRanges((uintptr_t)memory, replacement, PAGE_SIZE, mask, mock.protection));
+            REQUIRE(!mock.patches && !memcmp(memory, original, PAGE_SIZE));
+            REQUIRE(legacyPreparations == (availableExports ? 0 : 1));
+            // 尚未成功选择后端时允许稍后出现的完整接口恢复工作。
+            availableExports = 3;
+        }
+    }
     testDirtyRanges();
     testCommitProtection();
     testPartialCommit();
     testRestorePreservesLiveBytes();
     testRestoreReportedErrors();
     testRestoreFailures();
+    REQUIRE(legacyPreparations == (availableExports ? (legacyAvailable ? 0 : 1) : 1));
+    if (!availableExports) REQUIRE(resolutions == 2);
     free(memory); free(original); free(replacement); free(mask); free(scratch);
     printf("PASS memory backend dirty ranges, protection and verified rollback: %u checks\n", checks);
     return 0;

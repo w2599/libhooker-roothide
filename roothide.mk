@@ -17,7 +17,7 @@ LIBRARY_NAME = $(LH_ENGINE_NAME) libinjector MobileSafety
 # 按职责列出实际参与构建的模块，旧平台实现继续由原 Makefile 管理。
 LH_SYMBOL_FILES = libhooker/dyld/dyldSyms-modern.c libhooker/dyld/macho-symbols.c libhooker/dyld/image-registry.c
 LH_RELOCATION_FILES = libhooker/as-aarch64/as-aarch64.c libhooker/disas-aarch64/disas-aarch64.c libhooker/func/funcHook.c
-LH_MEMORY_FILES = libhooker/mem/writeMem-roothide.c libhooker/mem/threadSafety.c libhooker/mem/shadowMem.c libhooker/mem/shadowMem.cpp libhooker/mem/hook-transaction.c libhooker/mem/header-relay.c
+LH_MEMORY_FILES = libhooker/mem/writeMem-roothide.c libhooker/mem/legacy-memory.c libhooker/mem/legacy-syscalls.S libhooker/mem/threadSafety.c libhooker/mem/shadowMem.c libhooker/mem/shadowMem.cpp libhooker/mem/hook-transaction.c libhooker/mem/header-relay.c
 LH_OBJC_FILES = libblackjack/objc/objc.c
 LH_COMPAT_FILES = compat/substrate.c compat/ellekit.c
 LH_CORE_FILES = $(LH_SYMBOL_FILES) $(LH_RELOCATION_FILES) $(LH_MEMORY_FILES) $(LH_OBJC_FILES) $(LH_COMPAT_FILES) libhooker/misc/misc.c
