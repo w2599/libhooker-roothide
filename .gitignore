@@ -2,3 +2,5 @@
 worker/
 packages/
 .DS_Store
+update.sh
+update.json

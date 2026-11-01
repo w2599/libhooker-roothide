@@ -8,7 +8,7 @@ make do
 
 默认构建发行版，包含 `arm64` 和 `arm64e`，最低系统版本由 `build-config.mk` 指定。通过 SSH 别名 `15` 安装，可用 `make do THEOS_DEVICE_IP=<地址或别名>` 指定设备。只打包用 `make package`，清理用 `make clean`，产物位于 `packages/`。
 
-默认引擎为 `libjoker.dylib`，兼容入口链接到同一引擎。使用 `./mybuild.sh 1` 构建并安装默认引擎，或使用 `./mybuild.sh 2` 改为 `libhooker.dylib`；脚本会先清理旧产物。安装后从 bootstrap／越狱工具重启用户空间，使已有进程载入新版。
+默认引擎为 `libjoker.dylib`，兼容入口链接到同一引擎。使用 `./mybuild.sh 1` 构建并安装默认引擎，或使用 `./mybuild.sh 2` 仅构建打包 `libhooker.dylib`，不安装到设备；脚本会先清理旧产物。安装后从 bootstrap／越狱工具重启用户空间，使已有进程载入新版。
 
 包信息位于 `control`，安装布局与维护脚本位于 `layout/`。
 
