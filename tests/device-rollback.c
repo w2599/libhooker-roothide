@@ -329,6 +329,14 @@ static int runFunctionBranches(void) {
     }
     uint32_t secondCode[] = {0x111f4000, 0xd65f03c0}; // add w0,w0,#2000; ret
     memcpy(center + 1056, secondCode, sizeof(secondCode));
+    // 仅检查这些样本的内存足迹；陷阱及回跳均不执行。
+    const uint32_t guarded[][5] = {
+        {0xd503201f, 0xd503201f, 0xd503201f, 0xb5ffffc0, 0xd65f03c0},
+        {0xd4200000, 0x11002c00, 0xd503201f, 0xd65f03c0, 0xd503201f},
+        {0xd503201f, 0xd4400000, 0x11002c00, 0xd503201f, 0xd65f03c0},
+    };
+    uint8_t *guardedEntries = center + 512;
+    memcpy(guardedEntries, guarded, sizeof(guarded));
     for (size_t i = 0; i < 4; i++) {
         if (realProtect(mach_task_self(), (mach_vm_address_t)pages[i], pageSize, false,
                 VM_PROT_READ | VM_PROT_EXECUTE) != KERN_SUCCESS) return 2;
@@ -374,6 +382,23 @@ static int runFunctionBranches(void) {
         require(target(7) == 2007 && ((LHTestFunction)secondOriginal)(7) == 1007,
             "repeat near Hook retains previous replacement");
         require(((LHTestFunction)originals[4])(7) == 18, "repeat near Hook retains first original");
+    }
+    for (size_t i = 0; i < sizeof(guarded) / sizeof(*guarded); i++) {
+        uint32_t *entry = (uint32_t *)(guardedEntries + i * sizeof(*guarded));
+        void *original = NULL;
+        struct LHFunctionHook hook = {
+            ptrauth_sign_unauthenticated(entry, ptrauth_key_function_pointer, 0),
+            ptrauth_sign_unauthenticated(replacements[2], ptrauth_key_function_pointer, 0), &original, NULL};
+        require((uintptr_t)entry - (uintptr_t)replacements[2] > 0x8000000, "guarded entry outside direct branch range");
+        int installed = LHHookFunctions(&hook, 1);
+        if (installed) {
+            require(installed == 1 && original && (entry[0] >> 26) == 5, "guarded entry uses one branch");
+        } else {
+            require(errno == LIBHOOKER_ERR_VM && !original && entry[0] == guarded[i][0],
+                "unavailable relay leaves guarded entry and output untouched");
+        }
+        require(!memcmp(entry + 1, guarded[i] + 1, sizeof(*guarded) - sizeof(*entry)),
+            "guarded entry preserves adjacent function and branch destinations");
     }
     printf("{\"case\":\"%s\",\"status\":\"%s\",\"checks\":%u,\"failures\":%u,\"detail\":\"%s\"}\n",
         selected->name, failures ? "fail" : "pass", checks, failures, firstFailure ? firstFailure : "all checks passed");

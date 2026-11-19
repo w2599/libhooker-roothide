@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "../libhooker/func/entry-window.h"
 
 static unsigned allocations;
 static size_t allocationSize;
@@ -106,10 +107,53 @@ static void testConditionalRelocation(void) {
     }
 }
 
+// 用只读指令样本检查覆盖窗口，不生成或执行补丁。
+static void testEntryWindow(void) {
+    const uint32_t nop = 0xd503201f, ret = 0xd65f03c0;
+    uint32_t code[LH_ENTRY_SCAN_WORDS];
+    for (size_t i = 0; i < LH_ENTRY_SCAN_WORDS; i++) code[i] = nop;
+    assert(!LHCanCoverThreeInstructions(code, 2));
+    assert(!LHCanCoverThreeInstructions(code, LH_ENTRY_SCAN_WORDS));
+    code[LH_ENTRY_SCAN_WORDS - 1] = ret;
+    assert(LHCanCoverThreeInstructions(code, LH_ENTRY_SCAN_WORDS));
+    code[3] = ret;
+    assert(LHCanCoverThreeInstructions(code, 4));
+    const uint32_t traps[] = {0xd4200000, 0xd43fffe0, 0xd4400000, 0xd45fffe0};
+    for (size_t i = 0; i < sizeof(traps) / sizeof(*traps); i++) {
+        code[0] = traps[i];
+        assert(LHIsTrapInstruction(code[0]) && !LHCanCoverThreeInstructions(code, 4));
+        code[0] = nop;
+        code[1] = traps[i];
+        assert(!LHCanCoverThreeInstructions(code, 4));
+        code[1] = nop;
+    }
+    // 从第四条跳回第二条或第三条；覆盖 B、BL、条件、比较和测试位分支。
+    const uint32_t backEdges[] = {0x17fffffe, 0x97ffffff, 0x54ffffc0,
+        0x54ffffd0, 0xb5ffffe0, 0x37ffffc0};
+    code[4] = ret;
+    for (size_t i = 0; i < sizeof(backEdges) / sizeof(*backEdges); i++) {
+        code[3] = backEdges[i];
+        assert(!LHCanCoverThreeInstructions(code, 5));
+    }
+    code[0] = 0x34000080; // 条件跳到第五条，另一条路径提前返回。
+    code[3] = ret;
+    code[4] = 0x17fffffe;
+    assert(!LHCanCoverThreeInstructions(code, 5));
+    code[4] = ret;
+    assert(LHCanCoverThreeInstructions(code, 5));
+    assert(!LHCanCoverThreeInstructions(code, 4)); // 跳出快照。
+    code[0] = nop;
+    code[3] = 0xd61f0200; // 间接跳转去向未知。
+    assert(!LHCanCoverThreeInstructions(code, 5));
+    code[3] = 0x14000000; // 窗口外的自循环可以结束分析。
+    assert(LHCanCoverThreeInstructions(code, 4));
+}
+
 // 一次运行覆盖编码语义和分配失败，交由宿主脚本启用 ASan/UBSan。
 int main(void) {
     testAbsoluteJump();
     testConditionalRelocation();
+    testEntryWindow();
     puts("jump-encoding: exact opcodes, relocation boundaries and allocation counts passed");
     return 0;
 }

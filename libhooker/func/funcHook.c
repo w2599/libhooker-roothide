@@ -15,6 +15,7 @@
 #include "../mem/shadowMem.h"
 #include "../mem/hook-transaction.h"
 #ifdef LH_ROOTHIDE
+#include "entry-window.h"
 #include "../mem/header-relay.h"
 #include <mach/mach.h>
 #include <mach/mach_vm.h>
@@ -202,6 +203,16 @@ static bool LHCanBranch(uintptr_t source, uintptr_t destination) {
     return destination >= source ? destination - source <= 0x7fffffcULL : source - destination <= 0x8000000ULL;
 }
 
+// 只检查当前事务已取得的入口页，跨页或超出指令预算的分支不使用三条覆盖。
+static bool LHCanCoverEntry(uintptr_t target) {
+    uint32_t words[LH_ENTRY_SCAN_WORDS];
+    size_t offset = target & PAGE_MASK;
+    size_t count = (PAGE_SIZE - offset) / sizeof(*words);
+    if (count > LH_ENTRY_SCAN_WORDS) count = LH_ENTRY_SCAN_WORDS;
+    return count >= 3 && LHCopyMemPage(words, target & ~PAGE_MASK, offset, count * sizeof(*words)) &&
+        LHCanCoverThreeInstructions(words, count);
+}
+
 // 短函数需要时单独申请近页，不与其他 Hook 共享页或复用槽位。
 static bool LHCreateShortRelay(uintptr_t target, const uint32_t *jump, void **relay) {
     uintptr_t lower = target > 0x7ff0000 ? target - 0x7ff0000 : PAGE_SIZE;
@@ -236,7 +247,7 @@ int LHHookFunction(void *symbol, void *hook, void **old, uint8_t reg) {
                 !LHCopyMemPage(&original[i], address & ~PAGE_MASK, address & PAGE_MASK,
                     sizeof(original[i]))) return LIBHOOKER_ERR_VM;
 #ifdef LH_ROOTHIDE
-        if (LHIsCall(original[i])) { count = 1; break; }
+        if (LHIsCall(original[i]) || LHIsTrapInstruction(original[i])) { count = 1; break; }
 #endif
         if (LHEndsBlock(original[i], registry)) { if (i < 2) count = 1; break; }
     }
@@ -265,7 +276,7 @@ int LHHookFunction(void *symbol, void *hook, void **old, uint8_t reg) {
     }
 #ifdef LH_ROOTHIDE
     // 保留原调用的完整重定位前缀，仅缩小入口改写，避免提前回跳破坏 IP 寄存器。
-    if (LHCanBranch(target, replacement)) count = 1;
+    if (count > 1 && (LHCanBranch(target, replacement) || !LHCanCoverEntry(target))) count = 1;
 #endif
     resources->patchSize = count * sizeof(uint32_t);
     result = LIBHOOKER_ERR_VM;

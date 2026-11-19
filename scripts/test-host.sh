@@ -5,7 +5,7 @@ cd "$(dirname "$0")/.."
 mkdir -p worker/host-tests
 common=(-O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all
     -DLH_ROOTHIDE -Ilibhooker/include/apple -Ilibhooker/include)
-xcrun clang "${common[@]}" tests/jump-encoding.c -o worker/host-tests/jump-encoding
+xcrun clang "${common[@]}" tests/jump-encoding.c libhooker/func/entry-window.c -o worker/host-tests/jump-encoding
 worker/host-tests/jump-encoding
 xcrun clang "${common[@]}" -c libhooker/mem/shadowMem.c -o worker/host-tests/shadow-memory-c.o
 xcrun clang++ -std=c++11 "${common[@]}" tests/shadow-memory.cpp libhooker/mem/shadowMem.cpp \
