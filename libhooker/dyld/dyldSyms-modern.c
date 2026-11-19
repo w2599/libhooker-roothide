@@ -13,7 +13,9 @@
 #include <mach-o/loader.h>
 #include <mach-o/nlist.h>
 #include <ptrauth.h>
+#include <stdatomic.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
@@ -23,6 +25,8 @@ static const struct dyld_cache_header *cacheHeader;
 static const uint8_t *localSymbols;
 static struct dyld_cache_local_symbols_info localInfo;
 static bool wideEntries;
+static bool entriesOrdered;
+static uint32_t *entryOrder;
 
 typedef const void *(*LHDlopenHeaderLookup)(void *);
 typedef void (*LHDyldLockAction)(void);
@@ -35,6 +39,64 @@ static struct LHDyldOpenLock LHGetDyldOpenLock(void) {
     LHDyldLockAction unlock = dlsym(RTLD_DEFAULT, "_dyld_dlopen_atfork_parent");
     if (!lock || !unlock) return (struct LHDyldOpenLock){0};
     return (struct LHDyldOpenLock){lock, unlock};
+}
+
+// 从已验证的映射读取条目，兼容未对齐的两种磁盘布局。
+static struct dyld_cache_local_symbols_entry_64 LHCacheEntry(uint32_t index) {
+    const uint8_t *entries = localSymbols + localInfo.entriesOffset;
+    if (wideEntries) {
+        struct dyld_cache_local_symbols_entry_64 entry;
+        memcpy(&entry, entries + (size_t)index * sizeof(entry), sizeof(entry));
+        return entry;
+    }
+    struct dyld_cache_local_symbols_entry entry;
+    memcpy(&entry, entries + (size_t)index * sizeof(entry), sizeof(entry));
+    return (struct dyld_cache_local_symbols_entry_64){entry.dylibOffset, entry.nlistStartIndex, entry.nlistCount};
+}
+
+// 排序时以原序号打破平局，保留顺序扫描对重复偏移的首次匹配。
+static int LHCompareCacheEntries(const void *left, const void *right) {
+    uint32_t a = *(const uint32_t *)left, b = *(const uint32_t *)right;
+    uint64_t x = LHCacheEntry(a).dylibOffset, y = LHCacheEntry(b).dylibOffset;
+    if (x != y) return x < y ? -1 : 1;
+    return (a > b) - (a < b);
+}
+
+// 在映射初始化期间建立只读查找顺序；有序表直接使用映射，分配失败保留顺序查询。
+static void LHIndexCacheEntries(void) {
+    uint64_t previous = 0;
+    for (uint32_t i = 0; i < localInfo.entriesCount; i++) {
+        uint64_t offset = LHCacheEntry(i).dylibOffset;
+        if (offset < previous) {
+            entryOrder = calloc(localInfo.entriesCount, sizeof(*entryOrder));
+            if (!entryOrder) return;
+            for (uint32_t j = 0; j < localInfo.entriesCount; j++) entryOrder[j] = j;
+            qsort(entryOrder, localInfo.entriesCount, sizeof(*entryOrder), LHCompareCacheEntries);
+            break;
+        }
+        previous = offset;
+    }
+    entriesOrdered = true;
+}
+
+// 返回第一个匹配的条目；未命中时返回条目总数。
+static uint32_t LHFindCacheEntry(uint64_t imageOffset) {
+    uint32_t end = localInfo.entriesCount;
+    if (!entriesOrdered) {
+        for (uint32_t i = 0; i < end; i++)
+            if (LHCacheEntry(i).dylibOffset == imageOffset) return i;
+        return end;
+    }
+    uint32_t first = 0, last = end;
+    while (first < last) {
+        uint32_t mid = first + (last - first) / 2;
+        uint32_t index = entryOrder ? entryOrder[mid] : mid;
+        if (LHCacheEntry(index).dylibOffset < imageOffset) first = mid + 1;
+        else last = mid;
+    }
+    if (first == end) return end;
+    uint32_t index = entryOrder ? entryOrder[first] : first;
+    return LHCacheEntry(index).dylibOffset == imageOffset ? index : end;
 }
 
 // 读取磁盘共享缓存的符号区并核对运行中缓存的 UUID。
@@ -76,6 +138,7 @@ static bool LHMapLocalSymbols(const char *path, bool separate) {
     localSymbols = data;
     localInfo = info;
     wideEntries = wide;
+    LHIndexCacheEntries();
     return true;
 }
 
@@ -90,6 +153,8 @@ static bool LHTryCachePath(const char *base, bool separate) {
 // 延迟映射符号区；缺失符号文件时仍可查询导出符号。
 static void LHLoadLocalSymbols(void) {
     static dispatch_once_t once;
+    static atomic_bool initialized;
+    if (atomic_load_explicit(&initialized, memory_order_acquire)) return;
     // dyld 查询放在 once 外，避免另一线程的镜像构造函数反向等待该 once。
     const char *(*cachePath)(void) = dlsym(RTLD_DEFAULT, "dyld_shared_cache_file_path");
     const char *basePath = cachePath ? cachePath() : NULL;
@@ -118,6 +183,7 @@ static void LHLoadLocalSymbols(void) {
             if (LHTryCachePath(base, separate)) return;
         }
     });
+    atomic_store_explicit(&initialized, true, memory_order_release);
 }
 
 // 查找共享缓存中被剥离的本地符号。
@@ -127,22 +193,13 @@ static void LHSearchCache(const void *image, uintptr_t slide, const char **names
     LHLoadLocalSymbols();
     if (!localSymbols || !cacheHeader || (uintptr_t)image < (uintptr_t)cacheHeader) return;
     uint64_t imageOffset = (uintptr_t)image - (uintptr_t)cacheHeader;
-    for (uint32_t i = 0; i < localInfo.entriesCount; i++) {
-        struct dyld_cache_local_symbols_entry_64 entry;
-        if (wideEntries) {
-            memcpy(&entry, localSymbols + localInfo.entriesOffset + i * sizeof(entry), sizeof(entry));
-        } else {
-            struct dyld_cache_local_symbols_entry legacy;
-            memcpy(&legacy, localSymbols + localInfo.entriesOffset + i * sizeof(legacy), sizeof(legacy));
-            entry = (struct dyld_cache_local_symbols_entry_64){legacy.dylibOffset, legacy.nlistStartIndex, legacy.nlistCount};
-        }
-        if (entry.dylibOffset != imageOffset) continue;
-        if (!LHRange(entry.nlistStartIndex, entry.nlistCount, 1, localInfo.nlistCount)) return;
-        const struct nlist_64 *symbols = (const void *)(localSymbols + localInfo.nlistOffset);
-        LHSearchTable(image, slide, symbols + entry.nlistStartIndex, entry.nlistCount,
-            (const char *)localSymbols + localInfo.stringsOffset, localInfo.stringsSize, names, results, count);
-        return;
-    }
+    uint32_t index = LHFindCacheEntry(imageOffset);
+    if (index == localInfo.entriesCount) return;
+    struct dyld_cache_local_symbols_entry_64 entry = LHCacheEntry(index);
+    if (!LHRange(entry.nlistStartIndex, entry.nlistCount, 1, localInfo.nlistCount)) return;
+    const uint8_t *symbols = localSymbols + localInfo.nlistOffset + (size_t)entry.nlistStartIndex * sizeof(struct nlist_64);
+    LHSearchTable(image, slide, (const void *)symbols, entry.nlistCount,
+        (const char *)localSymbols + localInfo.stringsOffset, localInfo.stringsSize, names, results, count);
 }
 
 // 取得拥有引用的句柄后读取镜像；FIRST 排除没有显式重导出的普通依赖。

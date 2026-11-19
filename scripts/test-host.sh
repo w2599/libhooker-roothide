@@ -26,3 +26,8 @@ worker/host-tests/header-relay-mask
 xcrun clang "${common[@]}" tests/symbol-cache.c libhooker/dyld/macho-symbols.c \
     -o worker/host-tests/symbol-cache
 worker/host-tests/symbol-cache
+for width in narrow wide; do
+    worker/host-tests/symbol-cache "$width" ordered
+    worker/host-tests/symbol-cache "$width" shuffled
+done
+worker/host-tests/symbol-cache wide shuffled --no-index-memory
