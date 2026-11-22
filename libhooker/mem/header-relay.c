@@ -87,6 +87,14 @@ static bool LHRelayMetadataOutside(const struct load_command *command, uint64_t 
         case LC_VERSION_MIN_WATCHOS: case LC_SOURCE_VERSION: case LC_BUILD_VERSION:
         case LC_DYLD_ENVIRONMENT: case LC_PREBIND_CKSUM:
             return true;
+        case LC_SUB_FRAMEWORK: {
+            // umbrella 是命令内的字符串偏移；检查名称及其终止符都在命令内。
+            const struct sub_framework_command *framework = (const void *)command;
+            if (command->cmdsize < sizeof(*framework)) return false;
+            uint32_t offset = framework->umbrella.offset;
+            return offset >= sizeof(*framework) && offset < command->cmdsize &&
+                memchr((const char *)command + offset, '\0', command->cmdsize - offset) != NULL;
+        }
         case LC_CODE_SIGNATURE: case LC_SEGMENT_SPLIT_INFO: case LC_FUNCTION_STARTS:
         case LC_DATA_IN_CODE: case LC_DYLIB_CODE_SIGN_DRS: case LC_LINKER_OPTIMIZATION_HINT:
         case LC_DYLD_EXPORTS_TRIE: case LC_DYLD_CHAINED_FIXUPS: {

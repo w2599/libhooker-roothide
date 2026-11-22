@@ -59,8 +59,29 @@ static void testSmallAndEmptyRanges(void) {
     pending = NULL;
 }
 
+// 框架名应完整存放在加载命令内，拒绝截断和越界字符串。
+static void testSubFrameworkCommand(void) {
+    struct {
+        struct sub_framework_command data;
+        char name[12];
+    } fixture = {{LC_SUB_FRAMEWORK, sizeof(fixture), {.offset = sizeof(struct sub_framework_command)}}, "System"};
+    const struct load_command *command = (const void *)&fixture;
+    REQUIRE(LHRelayMetadataOutside(command, 0x1000, 0x2000));
+    fixture.data.cmdsize = sizeof(struct load_command);
+    REQUIRE(!LHRelayMetadataOutside(command, 0x1000, 0x2000));
+    fixture.data.cmdsize = sizeof(fixture);
+    fixture.data.umbrella.offset = sizeof(fixture) - 1;
+    fixture.name[sizeof(fixture.name) - 1] = 'X';
+    REQUIRE(!LHRelayMetadataOutside(command, 0x1000, 0x2000));
+    fixture.data.umbrella.offset = sizeof(fixture);
+    REQUIRE(!LHRelayMetadataOutside(command, 0x1000, 0x2000));
+    fixture.data.umbrella.offset = 0;
+    REQUIRE(!LHRelayMetadataOutside(command, 0x1000, 0x2000));
+}
+
 // 运行全部纯内存边界检查，不连接设备。
 int main(void) {
+    testSubFrameworkCommand();
     testClippedRanges();
     testOverlapAndHighAddresses();
     testSmallAndEmptyRanges();
