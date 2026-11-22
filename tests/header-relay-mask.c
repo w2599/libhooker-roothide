@@ -59,29 +59,43 @@ static void testSmallAndEmptyRanges(void) {
     pending = NULL;
 }
 
-// 框架名应完整存放在加载命令内，拒绝截断和越界字符串。
-static void testSubFrameworkCommand(void) {
+// 用各命令的实际头长验证名称边界，损坏的元数据不得被当作填充。
+static void testNameCommand(uint32_t type, uint32_t minimum) {
     struct {
-        struct sub_framework_command data;
-        char name[12];
-    } fixture = {{LC_SUB_FRAMEWORK, sizeof(fixture), {.offset = sizeof(struct sub_framework_command)}}, "System"};
-    const struct load_command *command = (const void *)&fixture;
-    REQUIRE(LHRelayMetadataOutside(command, 0x1000, 0x2000));
-    fixture.data.cmdsize = sizeof(struct load_command);
-    REQUIRE(!LHRelayMetadataOutside(command, 0x1000, 0x2000));
-    fixture.data.cmdsize = sizeof(fixture);
-    fixture.data.umbrella.offset = sizeof(fixture) - 1;
-    fixture.name[sizeof(fixture.name) - 1] = 'X';
-    REQUIRE(!LHRelayMetadataOutside(command, 0x1000, 0x2000));
-    fixture.data.umbrella.offset = sizeof(fixture);
-    REQUIRE(!LHRelayMetadataOutside(command, 0x1000, 0x2000));
-    fixture.data.umbrella.offset = 0;
-    REQUIRE(!LHRelayMetadataOutside(command, 0x1000, 0x2000));
+        struct load_command command;
+        uint32_t offset;
+        char rest[28];
+    } fixture = {{type, sizeof(fixture)}, minimum, {0}};
+    memcpy((char *)&fixture + minimum, "System", sizeof("System"));
+    REQUIRE(LHRelayMetadataOutside(&fixture.command, 0x1000, 0x2000));
+    fixture.command.cmdsize = sizeof(struct load_command);
+    REQUIRE(!LHRelayMetadataOutside(&fixture.command, 0x1000, 0x2000));
+    fixture.command.cmdsize = sizeof(fixture);
+    fixture.offset = sizeof(fixture) - 1;
+    fixture.rest[sizeof(fixture.rest) - 1] = 'X';
+    REQUIRE(!LHRelayMetadataOutside(&fixture.command, 0x1000, 0x2000));
+    fixture.offset = sizeof(fixture);
+    REQUIRE(!LHRelayMetadataOutside(&fixture.command, 0x1000, 0x2000));
+    fixture.offset = minimum - 1;
+    REQUIRE(!LHRelayMetadataOutside(&fixture.command, 0x1000, 0x2000));
 }
 
 // 运行全部纯内存边界检查，不连接设备。
 int main(void) {
-    testSubFrameworkCommand();
+    testNameCommand(LC_SUB_FRAMEWORK, sizeof(struct sub_framework_command));
+    testNameCommand(LC_SUB_CLIENT, sizeof(struct sub_client_command));
+    testNameCommand(LC_SUB_LIBRARY, sizeof(struct sub_library_command));
+    testNameCommand(LC_SUB_UMBRELLA, sizeof(struct sub_umbrella_command));
+    testNameCommand(LC_RPATH, sizeof(struct rpath_command));
+    testNameCommand(LC_LOAD_DYLINKER, sizeof(struct dylinker_command));
+    testNameCommand(LC_ID_DYLINKER, sizeof(struct dylinker_command));
+    testNameCommand(LC_DYLD_ENVIRONMENT, sizeof(struct dylinker_command));
+    testNameCommand(LC_ID_DYLIB, sizeof(struct dylib_command));
+    testNameCommand(LC_LOAD_DYLIB, sizeof(struct dylib_command));
+    testNameCommand(LC_LOAD_WEAK_DYLIB, sizeof(struct dylib_command));
+    testNameCommand(LC_REEXPORT_DYLIB, sizeof(struct dylib_command));
+    testNameCommand(LC_LAZY_LOAD_DYLIB, sizeof(struct dylib_command));
+    testNameCommand(LC_LOAD_UPWARD_DYLIB, sizeof(struct dylib_command));
     testClippedRanges();
     testOverlapAndHighAddresses();
     testSmallAndEmptyRanges();

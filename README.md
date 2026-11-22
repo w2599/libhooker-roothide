@@ -40,7 +40,7 @@ make do
 ```sh
 bash scripts/test-host.sh
 make package
-python3 scripts/verify-package.py packages/org.coolstar.libhooker_1.6.9-24+roothide_iphoneos-arm64e.deb
+python3 scripts/verify-package.py packages/org.coolstar.libhooker_1.6.9-25+roothide_iphoneos-arm64e.deb
 bash scripts/build-device-rollback.sh
 bash scripts/build-device-compat.sh
 ```

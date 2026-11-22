@@ -77,24 +77,29 @@ static bool LHFileDataOutside(uint64_t offset, uint64_t size, uint64_t lower, ui
     return offset >= upper || offset + size <= lower;
 }
 
+// 名称类命令的第三个字段是 lc_str 偏移，字符串必须完整落在固定头之后。
+static bool LHRelayHasInlineName(const struct load_command *command, size_t headerSize) {
+    if (command->cmdsize < headerSize) return false;
+    uint32_t offset;
+    memcpy(&offset, command + 1, sizeof(offset));
+    return offset >= headerSize && offset < command->cmdsize &&
+        memchr((const char *)command + offset, '\0', command->cmdsize - offset) != NULL;
+}
+
 // 只接受用途已知的加载命令，并拒绝指向候选区的显式文件数据。
 static bool LHRelayMetadataOutside(const struct load_command *command, uint64_t lower, uint64_t upper) {
     switch (command->cmd) {
-        case LC_SEGMENT_64: case LC_UUID: case LC_ID_DYLIB: case LC_LOAD_DYLIB:
-        case LC_LOAD_WEAK_DYLIB: case LC_REEXPORT_DYLIB: case LC_LAZY_LOAD_DYLIB:
-        case LC_LOAD_UPWARD_DYLIB: case LC_RPATH: case LC_LOAD_DYLINKER: case LC_ID_DYLINKER:
+        case LC_SEGMENT_64: case LC_UUID: case LC_PREBIND_CKSUM:
         case LC_VERSION_MIN_MACOSX: case LC_VERSION_MIN_IPHONEOS: case LC_VERSION_MIN_TVOS:
         case LC_VERSION_MIN_WATCHOS: case LC_SOURCE_VERSION: case LC_BUILD_VERSION:
-        case LC_DYLD_ENVIRONMENT: case LC_PREBIND_CKSUM:
             return true;
-        case LC_SUB_FRAMEWORK: {
-            // umbrella 是命令内的字符串偏移；检查名称及其终止符都在命令内。
-            const struct sub_framework_command *framework = (const void *)command;
-            if (command->cmdsize < sizeof(*framework)) return false;
-            uint32_t offset = framework->umbrella.offset;
-            return offset >= sizeof(*framework) && offset < command->cmdsize &&
-                memchr((const char *)command + offset, '\0', command->cmdsize - offset) != NULL;
-        }
+        case LC_SUB_FRAMEWORK: case LC_SUB_CLIENT: case LC_SUB_LIBRARY: case LC_SUB_UMBRELLA:
+            return LHRelayHasInlineName(command, sizeof(struct sub_framework_command));
+        case LC_RPATH: case LC_LOAD_DYLINKER: case LC_ID_DYLINKER: case LC_DYLD_ENVIRONMENT:
+            return LHRelayHasInlineName(command, sizeof(struct dylinker_command));
+        case LC_ID_DYLIB: case LC_LOAD_DYLIB: case LC_LOAD_WEAK_DYLIB: case LC_REEXPORT_DYLIB:
+        case LC_LAZY_LOAD_DYLIB: case LC_LOAD_UPWARD_DYLIB:
+            return LHRelayHasInlineName(command, sizeof(struct dylib_command));
         case LC_CODE_SIGNATURE: case LC_SEGMENT_SPLIT_INFO: case LC_FUNCTION_STARTS:
         case LC_DATA_IN_CODE: case LC_DYLIB_CODE_SIGN_DRS: case LC_LINKER_OPTIMIZATION_HINT:
         case LC_DYLD_EXPORTS_TRIE: case LC_DYLD_CHAINED_FIXUPS: {
