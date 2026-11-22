@@ -33,14 +33,6 @@ static bool LHEndsBlock(uint32_t opcode, const struct disasm_reg_t *registry) {
         (opcode & 0xfffff800) == 0xd71f0800;
 }
 
-// 只有控制流目标才随被覆盖的原指令移动，取址指令保留原地址。
-static bool LHIsBranch(uint32_t opcode) {
-    return (opcode & 0x7c000000) == 0x14000000 ||
-        (opcode & 0x7e000000) == 0x34000000 ||
-        (opcode & 0x7e000000) == 0x36000000 ||
-        (opcode & 0xff000010) == 0x54000000;
-}
-
 // 前缀内调用可把返回地址保存到深层栈中，不能用多指令入口覆盖它。
 static bool LHIsCall(uint32_t opcode) {
     return (opcode & 0xfc000000) == 0x94000000 ||
@@ -60,7 +52,7 @@ static uint8_t LHRelocationRegister(const uint32_t *instructions, size_t count, 
                 (opcode & 0xbfa07c00U) == 0x08207c00U ||
                 (opcode & 0xffffbc00U) == 0xf83f9000U ||
                 (opcode & 0xffe0ec00U) == 0xf820a000U || LHIsCall(opcode)) return 31;
-        if ((opcode & 0x7c000000) == 0x14000000 || (opcode & 0xff000010) == 0x54000000) continue;
+        if ((opcode & 0x7c000000) == 0x14000000 || LHIsConditionCodeBranch(opcode)) continue;
         if ((opcode & 0x1f000000) == 0x10000000 || (opcode & 0x3b000000) == 0x18000000 ||
                 (opcode & 0x1f800000) == 0x12800000 ||
                 (opcode & 0x7e000000) == 0x34000000 || (opcode & 0x7e000000) == 0x36000000) {

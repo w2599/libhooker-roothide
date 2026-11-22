@@ -130,11 +130,6 @@ privateFunc uint32_t *handle_b(uint64_t pc, uint32_t opcode, uint8_t jmp_reg, ui
     return rehandle_b(opcode, jmp_reg, targetAddr);
 }
 
-// 识别条件分支。
-privateFunc bool is_bCond(uint32_t opcode){
-    return ((opcode >> 25) & 0x7f) == 0b0101010;
-}
-
 // 保留条件码，以双分支转入绝对跳转序列。
 privateFunc uint32_t *rehandle_bCond(uint32_t opcode, uint8_t jmp_reg, uint64_t targetAddr) {
     if (jmp_reg >= 31) return NULL;
@@ -322,7 +317,7 @@ struct disasm_reg_t disasm_registry[] = {
     {&is_cbz, &handle_cbz, &rehandle_cbz, (JMPSIZ + 1) * sizeof(uint32_t)},
     {&is_tbz, &handle_tbz, &rehandle_tbz, (JMPSIZ + 1) * sizeof(uint32_t)},
     {&is_b, &handle_b, &rehandle_b, JMPSIZ * sizeof(uint32_t)},
-    {&is_bCond, &handle_bCond, &rehandle_bCond, (JMPSIZ + 2) * sizeof(uint32_t)},
+    {&LHIsConditionCodeBranch, &handle_bCond, &rehandle_bCond, (JMPSIZ + 2) * sizeof(uint32_t)},
     // PRFM 与整数 LDR 共用主编码，必须先识别预取指令。
     {&is_prfm, &handle_prfm, NULL, 1 * sizeof(uint32_t)},
     {&is_ldr, &handle_ldr, &rehandle_ldr, JMPSIZ * sizeof(uint32_t)},

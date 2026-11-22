@@ -1,4 +1,5 @@
 #include "entry-window.h"
+#include "../disas-aarch64/disas-aarch64.h"
 
 // BRK、HLT 的立即数不影响入口边界；UDF 也是常见的短陷阱桩。
 bool LHIsTrapInstruction(uint32_t word) {
@@ -35,9 +36,9 @@ bool LHCanCoverThreeInstructions(const uint32_t *words, size_t count) {
             target = LHRelativeIndex(index, word, 26);
             conditional = false;
             if (index < 2) return false;
-        } else if ((word & 0xff000000) == 0x54000000 || (word & 0x7e000000) == 0x34000000) {
+        } else if (LHIsConditionCodeBranch(word) || (word & 0x7e000000) == 0x34000000) {
             target = LHRelativeIndex(index, word >> 5, 19);
-            if ((word & 0xff000000) == 0x54000000 && (word & 0xf) >= 0xe) {
+            if (LHIsConditionCodeBranch(word) && (word & 0xf) >= 0xe) {
                 if (index < 2) return false;
                 conditional = false;
             }

@@ -72,12 +72,13 @@ static void testConditionalRelocation(void) {
         uint32_t mask = kind == 1 ? 0x3fff : 0x7ffff;
         int32_t limit = (mask + 1) / 2;
         const int32_t displacements[] = {-limit, -1, 0, 1, limit - 1};
-        for (unsigned variant = 0; variant < (kind == 2 ? 16 : 4); variant++) {
+        if (kind == 2) assert(!handler->is_op(0x55000000));
+        for (unsigned variant = 0; variant < (kind == 2 ? 32 : 4); variant++) {
             uint32_t base = kind == 0 ? 0x3400001f : kind == 1 ? 0x36f8001f : 0x54000000 | variant;
             if (kind != 2) base |= ((variant & 1) << 24) | ((variant >> 1) << 31);
             for (unsigned d = 0; d < sizeof(displacements) / sizeof(*displacements); d++) {
                 uint32_t opcode = base | (((uint32_t)displacements[d] & mask) << 5);
-                assert(handler->is_op(opcode));
+                assert(handler->is_op(opcode) && LHIsBranch(opcode));
                 for (unsigned rewrite = 0; rewrite < 2; rewrite++) {
                     uint64_t target = 0, expected = rewrite ? rewrittenTarget : pc + (int64_t)displacements[d] * 4;
                     allocations = 0;
@@ -88,7 +89,7 @@ static void testConditionalRelocation(void) {
                     assert(allocationSize == (JMPSIZ + prefix) * sizeof(uint32_t));
                     assert(rewrite || target == expected);
                     if (kind == 2) {
-                        assert(code[0] == (0x54000040 | variant));
+                        assert(code[0] == (0x54000040 | (variant & 0xf)));
                         assert(code[1] == (0x14000000 | (JMPSIZ + 1)));
                     } else {
                         assert(code[0] == ((base ^ 0x01000000) | ((JMPSIZ + 1) << 5)));

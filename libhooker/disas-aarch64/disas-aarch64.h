@@ -34,6 +34,19 @@ typedef struct disasm_reg_t {
     int tramp_size;
 } disasm_reg;
 
+// B.cond 和 BC.cond 共用高字节；入口检查与原调用的目标校验须采用同一判定。
+static inline bool LHIsConditionCodeBranch(uint32_t word) {
+    return (word & 0xff000000) == 0x54000000;
+}
+
+// 仅分支目标随被覆盖的指令移动，普通取址指令保留原地址。
+static inline bool LHIsBranch(uint32_t opcode) {
+    return (opcode & 0x7c000000) == 0x14000000 ||
+        (opcode & 0x7e000000) == 0x34000000 ||
+        (opcode & 0x7e000000) == 0x36000000 ||
+        LHIsConditionCodeBranch(opcode);
+}
+
 void LHGetDisasmRegistry(struct disasm_reg_t **disasm_reg, int *size);
 
 bool is_bExit(uint32_t opcode);
